@@ -2,6 +2,8 @@ process MERGE_VCF_COLUMNS {
     tag "$meta.id"
     label 'process_low'
 
+    container "docker.io/kmhzamir/dragena:v1.2"
+    
     input:
     tuple val(meta), path(merged_tab)  // Concatenated tab file from previous step
     tuple val(meta), path(vcf), path(tbi)                           // Raw VCF file
