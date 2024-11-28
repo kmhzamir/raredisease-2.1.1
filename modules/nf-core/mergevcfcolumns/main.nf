@@ -13,7 +13,7 @@ process MERGE_VCF_COLUMNS {
 
     script:
     """
-    python <<CODE
+    python3 <<CODE
 import gzip
 import pandas as pd
 
