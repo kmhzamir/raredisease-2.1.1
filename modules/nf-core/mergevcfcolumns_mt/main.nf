@@ -2,7 +2,7 @@ process MERGE_VCF_COLUMNS {
     tag "$meta.id"
     label 'process_low'
 
-    container "docker.io/kmhzamir/dragena:v1.2"
+    container "docker.io/kmhzamir/dragena:v1.4"
     
     input:
     tuple val(meta), path(merged_tab)  // Concatenated tab file from previous step
