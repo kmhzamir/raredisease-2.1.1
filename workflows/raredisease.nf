@@ -137,7 +137,7 @@ workflow RAREDISEASE {
     ch_genome_fai               = params.fai            ? Channel.fromPath(params.fai).map {it -> [[id:it[0].simpleName], it]}.collect()
                                                         : Channel.empty()
     ch_target_bed_unprocessed   = params.target_bed     ? Channel.fromPath(params.target_bed).map{ it -> [[id:it[0].simpleName], it] }.collect()
-                                                        : Channel.value([[],[]]) 
+                                                        : Channel.value([[],[]])
     known_indels                = params.known_indels   ? Channel.fromPath(params.known_indels).collect()            : Channel.value([])
     known_indels_2              = params.known_indels_2 ? Channel.fromPath(params.known_indels_2).collect()          : Channel.value([])
     dbsnp                       = params.dbsnp          ? Channel.fromPath(params.dbsnp).collect()                   : Channel.value([])
@@ -223,7 +223,7 @@ workflow RAREDISEASE {
     ch_mtshift_fasta            = ch_references.mtshift_fasta
     ch_mtshift_intervals        = ch_references.mtshift_intervals
     ch_mt_intervals             = ch_references.mt_intervals
-    ch_mtshift_backchain        = ch_references.mtshift_backchain                         
+    ch_mtshift_backchain        = ch_references.mtshift_backchain
     ch_versions                 = ch_versions.mix(ch_references.versions)
 
     // Read and store paths in the vep_plugin_files file
@@ -258,7 +258,7 @@ workflow RAREDISEASE {
     ch_pedfile   = CREATE_PEDIGREE_FILE(ch_samples.toList()).ped
     ch_versions = ch_versions.mix(CREATE_PEDIGREE_FILE.out.versions)
 
-    
+
     // CREATE CHROMOSOME BED AND INTERVALS
     SCATTER_GENOME (
         ch_genome_dictionary,
@@ -277,7 +277,7 @@ workflow RAREDISEASE {
     )
     ch_reports = ch_reports.mix(FASTQC.out.zip.collect{ meta, logs -> logs })
     ch_versions = ch_versions.mix(FASTQC.out.versions.first())
-    
+
     //
     // ALIGNING READS, FETCH STATS, AND MERGE.
     //
@@ -299,34 +299,37 @@ workflow RAREDISEASE {
     mapped_bam_bai = ALIGN.out.genome_bam_bai
 
     //BASERECALIBRATOR
-    BAM_BASERECALIBRATOR(
-                mapped_bam_bai,
-                dict,
-                ch_genome_fasta,
-                ch_genome_fai,
-                known_sites_indels,
-                known_sites_indels_tbi
-    )
-    ch_versions = ch_versions.mix(BAM_BASERECALIBRATOR.out.versions)
-    ch_table_bqsr = BAM_BASERECALIBRATOR.out.table_bqsr
-    bam_applybqsr = mapped_bam_bai.join(ch_table_bqsr)
+    // BAM_BASERECALIBRATOR(
+    //             mapped_bam_bai,
+    //             dict,
+    //             ch_genome_fasta,
+    //             ch_genome_fai,
+    //             known_sites_indels,
+    //             known_sites_indels_tbi
+    // )
+    // ch_versions = ch_versions.mix(BAM_BASERECALIBRATOR.out.versions)
+    // ch_table_bqsr = BAM_BASERECALIBRATOR.out.table_bqsr
+    // bam_applybqsr = mapped_bam_bai.join(ch_table_bqsr)
 
     //APPLYBQSR
-    BAM_APPLYBQSR(
-                bam_applybqsr,
-                dict,
-                ch_genome_fasta,
-                ch_genome_fai,
-    )
-    .set{ch_recalibrated}
+    // BAM_APPLYBQSR(
+    //             bam_applybqsr,
+    //             dict,
+    //             ch_genome_fasta,
+    //             ch_genome_fai,
+    // )
+    // .set{ch_recalibrated}
 
-    ch_versions = ch_versions.mix(BAM_APPLYBQSR.out.versions)
+    // ch_versions = ch_versions.mix(BAM_APPLYBQSR.out.versions)
 
     // BAM QUALITY CHECK
     QC_BAM (
-        ch_recalibrated.bqsr_bam,
-        ch_recalibrated.bqsr_bai,
-        ch_recalibrated.a_bqsr_bam_bai,
+        // ch_recalibrated.bqsr_bam,
+        // ch_recalibrated.bqsr_bai,
+        // ch_recalibrated.a_bqsr_bam_bai,
+        ch_aligned.genome_marked_bam,
+        ch_aligned.genome_marked_bai,
+        ch_aligned.genome_bam_bai,
         ch_genome_fasta,
         ch_genome_fai,
         ch_bait_intervals,
@@ -339,7 +342,8 @@ workflow RAREDISEASE {
 
     ch_versions = ch_versions.mix(QC_BAM.out.versions)
 
-    input_bam = ch_recalibrated.a_bqsr_bam_bai
+    // input_bam = ch_recalibrated.a_bqsr_bam_bai
+    input_bam = ch_aligned.genome_bam_bai
 
     // Assign BAM
     input_bam.combine(chh_target_bed)
@@ -364,7 +368,7 @@ workflow RAREDISEASE {
     SMNCOPYNUMBERCALLER (
         ch_bams_bais
     )
-    ch_versions = ch_versions.mix(SMNCOPYNUMBERCALLER.out.versions)      
+    ch_versions = ch_versions.mix(SMNCOPYNUMBERCALLER.out.versions)
 
     //
     // SNV Variant calling
@@ -425,7 +429,7 @@ workflow RAREDISEASE {
             GENERATE_CLINICAL_SET_SNV.out.vcf,
             ch_variant_consequences_snv
         )
-        ch_versions = ch_versions.mix(ANN_CSQ_PLI_SNV.out.versions) 
+        ch_versions = ch_versions.mix(ANN_CSQ_PLI_SNV.out.versions)
 
         RANK_VARIANTS_SNV (
             ch_snv_annotate.vcf_ann,

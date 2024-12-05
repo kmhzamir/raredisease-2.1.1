@@ -7,7 +7,10 @@ include { CALL_SNV_MT as CALL_SNV_MT_SHIFT } from './variant_calling/call_snv_MT
 include { POSTPROCESS_MT_CALLS             } from './variant_calling/postprocess_MT_calls'
 include { GATK4_SELECTVARIANTS             } from '../../modules/nf-core/gatk4/selectvariants/main'
 include { BAM_VARIANT_CALLING_HAPLOTYPECALLER   } from './variant_calling/bam_variant_calling_haplotypecaller_2'
-
+include { BCFTOOLS_MERGE                   } from '../../modules/nf-core/bcftools/merge/main'
+include { TABIX_BGZIPTABIX as TABIX_OUT    } from '../../modules/nf-core/tabix/bgziptabix/main'
+include { TABIX_BGZIP                      } from '../../modules/nf-core/tabix/bgzip'
+include { TABIX_TABIX                      } from '../../modules/nf-core/tabix/tabix/main'
 
 workflow CALL_SNV {
     take:
@@ -36,12 +39,13 @@ workflow CALL_SNV {
         ch_genome_vcf_tabix    = Channel.empty()
 
 
+    if (params.analysis_type == "wes") {
         BAM_VARIANT_CALLING_HAPLOTYPECALLER(
-            ch_genome_bam_bai, 
-            ch_genome_fasta, 
-            ch_genome_fai, 
-            ch_genome_dictionary, 
-            ch_dbsnp, 
+            ch_genome_bam_bai,
+            ch_genome_fasta,
+            ch_genome_fai,
+            ch_genome_dictionary,
+            ch_dbsnp,
             ch_dbsnp_tbi,
             ch_case_info
         )
@@ -54,46 +58,92 @@ workflow CALL_SNV {
             .set {ch_selvar_in}
         GATK4_SELECTVARIANTS(ch_selvar_in) // remove mitochondrial variants
 
-        ch_genome_vcf       = GATK4_SELECTVARIANTS.out.vcf
-        ch_genome_tabix     = GATK4_SELECTVARIANTS.out.tbi
+        GATK4_SELECTVARIANTS.out.vcf
+            .collect{it[1]}
+            .ifEmpty([])
+            .toList()
+            .set { file_list_vcf }
+
+        GATK4_SELECTVARIANTS.out.tbi
+            .collect{it[1]}
+            .ifEmpty([])
+            .toList()
+            .set { file_list_tbi }
+
+        ch_case_info
+            .combine(file_list_vcf)
+            .combine(file_list_tbi)
+            .set { ch_rem_dup_vcf_tbi }
+
+        ch_rem_dup_vcf_tbi.branch {
+            meta, vcf, tbi ->
+                single: vcf.size() == 1
+                    return [meta, vcf, tbi]
+                multiple: vcf.size() > 1
+                    return [meta, vcf, tbi]
+            }.set { ch_case_vcf }
+
+        BCFTOOLS_MERGE( ch_case_vcf.multiple,
+            ch_genome_fasta,
+            ch_genome_fai,
+            []
+        )
+
+        TABIX_BGZIP( BCFTOOLS_MERGE.out.merged_variants )
+
+        TABIX_BGZIP.out.output
+            .mix(ch_case_vcf.single)
+            .set { ch_variants_vcf }
+
+        TABIX_TABIX( ch_variants_vcf )
+
+        ch_genome_vcf       = ch_variants_vcf
+        ch_genome_tabix     = TABIX_TABIX.out.tbi
+
         ch_genome_vcf_tabix = ch_genome_vcf.join(ch_genome_tabix, failOnMismatch:true, failOnDuplicate:true)
 
-        if (params.analysis_type.equals("wgs") || params.run_mt_for_wes) {
-            CALL_SNV_MT(
-                ch_mt_bam_bai,
-                ch_genome_fasta,
-                ch_genome_fai,
-                ch_genome_dictionary,
-                ch_mt_intervals
-            )
+    }
 
-            CALL_SNV_MT_SHIFT(
-                ch_mtshift_bam_bai,
-                ch_mtshift_fasta,
-                ch_mtshift_fai,
-                ch_mtshift_dictionary,
-                ch_mtshift_intervals
-            )
+    if (params.analysis_type.equals("wgs") || params.run_mt_for_wes) {
+        CALL_SNV_MT(
+            ch_mt_bam_bai,
+            ch_genome_fasta,
+            ch_genome_fai,
+            ch_genome_dictionary,
+            ch_mt_intervals
+        )
 
-            POSTPROCESS_MT_CALLS(
-                CALL_SNV_MT.out.vcf,
-                CALL_SNV_MT_SHIFT.out.vcf,
-                ch_genome_fasta,
-                ch_genome_dictionary,
-                ch_genome_fai,
-                ch_mtshift_backchain,
-                ch_case_info,
-                ch_foundin_header,
-                ch_genome_chrsizes
-            )
-            ch_mt_vcf   = POSTPROCESS_MT_CALLS.out.vcf
-            ch_mt_tabix = POSTPROCESS_MT_CALLS.out.tbi
-            ch_versions = ch_versions.mix(CALL_SNV_MT.out.versions)
-            ch_versions = ch_versions.mix(CALL_SNV_MT_SHIFT.out.versions)
-            ch_versions = ch_versions.mix(POSTPROCESS_MT_CALLS.out.versions)
-            //ch_versions = ch_versions.mix(GATK4_SELECTVARIANTS.out.versions)
-            ch_versions = ch_versions.mix(BAM_VARIANT_CALLING_HAPLOTYPECALLER.out.ch_versions)
-        }
+        CALL_SNV_MT_SHIFT(
+            ch_mtshift_bam_bai,
+            ch_mtshift_fasta,
+            ch_mtshift_fai,
+            ch_mtshift_dictionary,
+            ch_mtshift_intervals
+        )
+
+        POSTPROCESS_MT_CALLS(
+            CALL_SNV_MT.out.vcf,
+            CALL_SNV_MT_SHIFT.out.vcf,
+            ch_genome_fasta,
+            ch_genome_dictionary,
+            ch_genome_fai,
+            ch_mtshift_backchain,
+            ch_case_info,
+            ch_foundin_header,
+            ch_genome_chrsizes
+        )
+        ch_mt_vcf   = POSTPROCESS_MT_CALLS.out.vcf
+        ch_mt_tabix = POSTPROCESS_MT_CALLS.out.tbi
+
+        ch_versions = ch_versions.mix(CALL_SNV_MT.out.versions)
+        ch_versions = ch_versions.mix(CALL_SNV_MT_SHIFT.out.versions)
+        ch_versions = ch_versions.mix(POSTPROCESS_MT_CALLS.out.versions)
+        ch_versions = ch_versions.mix(GATK4_SELECTVARIANTS.out.versions)
+        ch_versions = ch_versions.mix(BCFTOOLS_MERGE.out.versions)
+        ch_versions = ch_versions.mix(TABIX_BGZIP.out.versions)
+        ch_versions = ch_versions.mix(TABIX_TABIX.out.versions)
+        ch_versions = ch_versions.mix(BAM_VARIANT_CALLING_HAPLOTYPECALLER.out.ch_versions)
+    }
 
     emit:
         genome_vcf       = ch_genome_vcf       // channel: [ val(meta), path(vcf) ]
